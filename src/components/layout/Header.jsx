@@ -4,6 +4,7 @@ import { useCart } from '@/context/CartContext'
 import { useCMS } from '@/context/CMSContext'
 import { useAuth } from '@/context/AuthContext'
 import { brl } from '@/lib/utils'
+import { Link } from 'react-router-dom'
 
 export default function Header({
   onOpenMenu,
@@ -21,14 +22,14 @@ export default function Header({
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
 
-  const navLinks = [
-      'Início', 
-      'Loja',
-      'Promoções',
-      'Receitas', 
-      'Sobre', 
-      'Contato'
-    ]
+ const navLinks = [
+    { name: 'Início', path: '/' },
+    { name: 'Loja', path: '/loja' },
+    { name: 'Sobre', path: '/sobre' }, 
+    { name: 'Promoções', path: '/promocoes' },
+    { name: 'Receitas', path: '/receitas' },
+    { name: 'Contato', path: '/contato' }
+  ]
 
   // Fecha o dropdown ao clicar fora dele
   useEffect(() => {
@@ -209,12 +210,13 @@ export default function Header({
               Todas Categorias
             </button>
             {navLinks.map(link => (
-              <button
-                key={link}
+              <Link
+                key={link.name}
+                to={link.path}
                 className="text-gray-600 hover:text-red-600 font-bold text-xs px-4 py-2.5 transition-colors hover:border-b-2 hover:border-red-600"
               >
-                {link}
-              </button>
+                {link.name}
+              </Link>
             ))}
           </div>
         </div>
