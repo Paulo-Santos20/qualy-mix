@@ -1,7 +1,7 @@
 // src/hooks/useApiKeys.js
 import { useState, useEffect } from 'react'
 
-const STORAGE_KEY = 'frescamart_api_keys'
+const STORAGE_KEY = 'QualyMix_api_keys'
 
 export function useApiKeys() {
   const [keys, setKeys] = useState(() => {

@@ -34,12 +34,12 @@ export const UNSPLASH = {
 
 export const initialCMS = {
   settings: {
-    storeName:  'FrescaMart',
+    storeName:  'QualyMix',
     tagline:    'O mercado mais fresco da cidade',
     phone:      '(81) 9 9999-0000',
-    email:      'contato@frescamart.com.br',
+    email:      'contato@QualyMix.com.br',
     address:    'Recife, PE',
-    instagram:  '@frescamart',
+    instagram:  '@QualyMix',
     freeShippingMin: 199,
   },
 

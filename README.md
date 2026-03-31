@@ -1,4 +1,4 @@
-# 🛒 FrescaMart — Marketplace de Supermercado
+# 🛒 QualyMix — Marketplace de Supermercado
 
 > React 18 · Vite · Tailwind CSS 3 · React Router v6 · Context API
 
@@ -25,7 +25,7 @@
 ## 🗂 Estrutura do Projeto
 
 ```
-frescamart/
+QualyMix/
 ├── index.html
 ├── vite.config.js
 ├── tailwind.config.js
