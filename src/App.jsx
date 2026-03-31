@@ -16,6 +16,7 @@ import AuthModal          from '@/components/auth/AuthModal' // Você precisará
 
 import Home from '@/pages/Home'
 import Shop from '@/pages/Shop'
+import About from '@/pages/About'
 
 function InnerApp() {
   const { cms, activeCategories } = useCMS()
@@ -37,6 +38,7 @@ function InnerApp() {
     setSearchQuery(q)
     if (q && location.pathname !== '/loja') navigate('/loja')
     if (!q && location.pathname === '/loja') navigate('/')
+    
   }
 
   const handleSelectCategory = (cat) => {
@@ -64,7 +66,8 @@ function InnerApp() {
         <Routes>
           <Route path="/" element={<Home activeCategory={activeCategory} onSelectCategory={handleSelectCategory} />} />
           <Route path="/loja" element={<Shop activeCategory={activeCategory} onSelectCategory={handleSelectCategory} searchQuery={searchQuery} />} />
-          <Route path="*" element={<Home activeCategory={activeCategory} onSelectCategory={handleSelectCategory} />} />
+          <Route path="/sobre" element={<About />} />
+          <Route path="*" element={<Home activeCategory={activeCategory} onSelectCategory={handleSelectCategory} />} />  
         </Routes>
       </main>
 

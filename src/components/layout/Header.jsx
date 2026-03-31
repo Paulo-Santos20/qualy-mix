@@ -21,7 +21,14 @@ export default function Header({
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
 
-  const navLinks = ['Início', 'Loja', 'Promoções', 'Receitas', 'Blog', 'Contato']
+  const navLinks = [
+      'Início', 
+      'Loja',
+      'Promoções',
+      'Receitas', 
+      'Sobre', 
+      'Contato'
+    ]
 
   // Fecha o dropdown ao clicar fora dele
   useEffect(() => {
