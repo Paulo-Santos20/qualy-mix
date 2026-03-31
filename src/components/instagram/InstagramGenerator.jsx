@@ -4,6 +4,7 @@ import { useApiKeys } from '@/hooks/useApiKeys'
 import { useCMS } from '@/context/CMSContext'
 import InstagramIcon from '@/components/icons/InstagramIcon'
 import { brl } from '@/lib/utils'
+import { GoogleGenAI } from "@google/genai"
 
 const STEPS = ['Produtos', 'Tema', 'Resultado']
 
@@ -36,23 +37,24 @@ function StepIndicator({ current }) {
 }
 
 async function callGemini(prompt, apiKey) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.85 },
-      }),
+  const ai = new GoogleGenAI({ apiKey: apiKey });
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview", 
+    contents: prompt,
+    config: {
+      temperature: 0.85,
+      responseMimeType: "application/json" 
     }
-  )
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error?.message || 'Gemini API error')
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-  return JSON.parse(text.replace(/```json|```/g, '').trim())
+  });
+
+  const text = response.text;
+  const cleanJson = text.replace(/```json/gi, '').replace(/```/gi, '').trim();
+  
+  return JSON.parse(cleanJson);
 }
 
+// Mantive o Groq como backup caso você use
 async function callGroq(prompt, apiKey) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -63,19 +65,17 @@ async function callGroq(prompt, apiKey) {
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
       messages: [
-        {
-          role: 'system',
-          content: 'Você é um especialista em marketing digital para supermercados brasileiros. Responda APENAS com JSON válido, sem texto adicional ou blocos de código markdown.',
-        },
+        { role: 'system', content: 'Você é um especialista em marketing digital para supermercados brasileiros. Responda APENAS com JSON.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.85,
+      response_format: { type: "json_object" }
     }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error?.message || 'Groq API error')
   const text = data.choices?.[0]?.message?.content ?? ''
-  return JSON.parse(text.replace(/```json|```/g, '').trim())
+  return JSON.parse(text.replace(/```json|```/gi, '').trim())
 }
 
 function buildPrompt(products, theme, storeName) {
@@ -96,14 +96,14 @@ Responda APENAS com JSON válido neste formato exato:
 {
   "legenda": "legenda completa com emojis e call-to-action (máx 300 palavras)",
   "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8"],
-  "conceito_imagem": "descrição detalhada para geração de imagem por IA: composição, iluminação, ângulo, cores, props, estilo fotográfico, fundo",
+  "conceito_imagem": "descrição detalhada, em inglês, focada apenas nos elementos visuais para geração de imagem por IA (composição, iluminação, cores vibrantes, estilo fotográfico de publicidade de alimentos, sem texto na imagem)",
   "stories": [
-    "Descrição do Frame 1 do story (gancho/curiosidade)",
-    "Descrição do Frame 2 do story (conteúdo/produto em foco)",
-    "Descrição do Frame 3 do story (CTA/encerramento)"
+    "Descrição do Frame 1 do story",
+    "Descrição do Frame 2 do story",
+    "Descrição do Frame 3 do story"
   ],
   "melhor_horario": "horário e dia ideal para postar com justificativa curta",
-  "tipo_conteudo": "Tipo de post (ex: Promoção relâmpago, Apresentação de produto, Conteúdo educativo)"
+  "tipo_conteudo": "Tipo de post"
 }`
 }
 
@@ -119,6 +119,10 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
   const [error, setError]                 = useState('')
   const [copied, setCopied]               = useState(false)
   const [providerUsed, setProviderUsed]   = useState('')
+
+  // Novos estados para as imagens geradas
+  const [generatedImages, setGeneratedImages] = useState([])
+  const [generatingImages, setGeneratingImages] = useState(false)
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -138,41 +142,89 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
   const generate = async () => {
     if (!selected.length) { setError('Selecione pelo menos 1 produto.'); return }
     if (!theme.trim())    { setError('Escreva o tema/objetivo do post.'); return }
-    if (!keys.gemini && !keys.groq) {
-      setError('Configure ao menos uma chave de API no Painel CMS → Configurações.')
-      return
+    
+    const geminiKey = keys?.gemini || import.meta.env.VITE_GEMINI_API_KEY;
+    const groqKey = keys?.groq || import.meta.env.VITE_GROQ_API_KEY;
+
+    if (!geminiKey && !groqKey) {
+      setError('Configure a chave da API no arquivo .env ou no Painel CMS.');
+      return;
     }
 
     setError('')
     setLoading(true)
     const prompt = buildPrompt(selected, theme, cms.settings.storeName)
     let parsed = null
+    let lastError = ''
 
-    if (keys.gemini) {
+    if (geminiKey) {
       try {
-        parsed = await callGemini(prompt, keys.gemini)
+        parsed = await callGemini(prompt, geminiKey)
         setProviderUsed('Gemini')
       } catch (e) {
-        console.warn('Gemini falhou, tentando Groq...', e.message)
+        console.error('Erro Gemini detalhado:', e)
+        lastError = 'Gemini: ' + e.message
       }
     }
 
-    if (!parsed && keys.groq) {
+    if (!parsed && groqKey) {
       try {
-        parsed = await callGroq(prompt, keys.groq)
+        parsed = await callGroq(prompt, groqKey)
         setProviderUsed('Groq')
       } catch (e) {
-        setError('Erro: ' + e.message)
+        console.error('Erro Groq detalhado:', e)
+        lastError = 'Groq: ' + e.message
       }
     }
 
     if (parsed) {
       setResult(parsed)
       setStep(3)
-    } else if (!error) {
-      setError('Não foi possível gerar. Verifique suas chaves de API.')
+    } else {
+      setError(`Falha ao gerar. Motivo: ${lastError || 'Resposta inválida da IA'}`)
     }
     setLoading(false)
+  }
+
+  // Função para gerar as 3 imagens via IA
+  const handleGenerateImages = () => {
+    if (!result?.conceito_imagem) return;
+    setGeneratingImages(true);
+    
+    // Codificamos o prompt para URL e adicionamos seeds aleatórias para gerar 3 imagens diferentes
+    const basePrompt = encodeURIComponent(result.conceito_imagem + " photorealistic, vivid colors, 8k resolution, food photography");
+    
+    const newImages = [
+      `https://image.pollinations.ai/prompt/${basePrompt}?width=1080&height=1080&nologo=true&seed=${Math.floor(Math.random() * 10000)}`,
+      `https://image.pollinations.ai/prompt/${basePrompt}?width=1080&height=1080&nologo=true&seed=${Math.floor(Math.random() * 10000)}`,
+      `https://image.pollinations.ai/prompt/${basePrompt}?width=1080&height=1080&nologo=true&seed=${Math.floor(Math.random() * 10000)}`
+    ];
+
+    // Simulando um delay para efeito visual de carregamento
+    setTimeout(() => {
+      setGeneratedImages(newImages);
+      setGeneratingImages(false);
+    }, 1500);
+  }
+
+  // Função para forçar o download da imagem ao invés de abrir em nova aba
+  const downloadImage = async (url, index) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `instagram-post-${index + 1}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('Erro ao baixar imagem:', err);
+      alert('Não foi possível baixar a imagem. Tente clicar com o botão direito e "Salvar imagem como".');
+    }
   }
 
   const copyCaption = () => {
@@ -186,6 +238,7 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
   const restart = () => {
     setStep(1); setSelected([]); setTheme('')
     setResult(null); setError(''); setProviderUsed('')
+    setGeneratedImages([]); // Reseta as imagens também
   }
 
   return (
@@ -200,13 +253,10 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
             </div>
             <div>
               <h2 className="text-white font-black text-base leading-none">Gerador de Post Instagram</h2>
-              <p className="text-orange-100 text-[10px] mt-0.5">Gemini + Groq AI · {cms.settings.storeName}</p>
+              <p className="text-orange-100 text-[10px] mt-0.5">IA Generativa · {cms.settings.storeName}</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-white/80 hover:text-white text-2xl font-bold leading-none hover:bg-white/10 rounded-lg p-1"
-          >
+          <button onClick={onClose} className="text-white/80 hover:text-white text-2xl font-bold leading-none hover:bg-white/10 rounded-lg p-1">
             ×
           </button>
         </div>
@@ -232,9 +282,7 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
                       key={p.id}
                       onClick={() => toggleProduct(p)}
                       className={`rounded-2xl border-2 p-2 text-left transition-all duration-200 ${
-                        isSel
-                          ? 'border-red-600 bg-red-50 shadow-sm'
-                          : 'border-gray-100 hover:border-orange-300 bg-white'
+                        isSel ? 'border-red-600 bg-red-50 shadow-sm' : 'border-gray-100 hover:border-orange-300 bg-white'
                       }`}
                     >
                       <div className="relative">
@@ -278,67 +326,28 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
                     <span className="text-xs font-bold text-red-700 max-w-[100px] truncate">
                       {p.name.split(' ').slice(0, 2).join(' ')}
                     </span>
-                    <button
-                      onClick={() => setSelected(prev => prev.filter(x => x.id !== p.id))}
-                      className="text-red-400 hover:text-red-700 font-bold text-sm leading-none"
-                    >
+                    <button onClick={() => setSelected(prev => prev.filter(x => x.id !== p.id))} className="text-red-400 hover:text-red-700 font-bold text-sm leading-none">
                       ×
                     </button>
                   </div>
                 ))}
               </div>
 
-              <label className="block text-sm font-black text-gray-800 mb-1">
-                Qual é o ponto principal / objetivo do post? *
-              </label>
-              <p className="text-xs text-gray-400 mb-2">
-                Seja específico: mencione promoção, público, ocasião ou benefício principal.
-              </p>
+              <label className="block text-sm font-black text-gray-800 mb-1">Qual é o ponto principal / objetivo do post? *</label>
               <textarea
                 value={theme}
                 onChange={e => setTheme(e.target.value)}
-                placeholder="Ex: Promoção de fim de semana com 30% de desconto, perfeito para quem vai fazer um churrasco de domingo com a família..."
+                placeholder="Ex: Promoção de fim de semana com 30% de desconto..."
                 rows={5}
                 className="w-full border-2 border-gray-200 focus:border-red-400 focus:ring-2 focus:ring-red-100 rounded-xl p-3 text-sm resize-none outline-none transition-all"
               />
 
-              {/* Quick suggestions */}
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {[
-                  'Promoção relâmpago 30% OFF',
-                  'Produtos orgânicos e saudáveis',
-                  'Churrasco de fim de semana',
-                  'Novidades da semana',
-                  'Combo família econômico',
-                ].map(s => (
-                  <button
-                    key={s}
-                    onClick={() => setTheme(prev => prev ? `${prev}. ${s}` : s)}
-                    className="text-[10px] font-bold bg-gray-100 hover:bg-orange-100 hover:text-orange-700 text-gray-600 px-2.5 py-1 rounded-full transition-colors"
-                  >
-                    + {s}
-                  </button>
-                ))}
-              </div>
-
               {error && (
-                <p className="text-red-500 text-xs mt-3 bg-red-50 border border-red-100 p-2.5 rounded-xl">
-                  ⚠️ {error}
-                </p>
-              )}
-
-              {(!keys.gemini && !keys.groq) && (
-                <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs text-yellow-800">
-                  ⚠️ Nenhuma chave de API configurada. Vá ao{' '}
-                  <strong>CMS → Configurações</strong> para adicionar sua chave Gemini ou Groq.
-                </div>
+                <p className="text-red-500 text-xs mt-3 bg-red-50 border border-red-100 p-2.5 rounded-xl">⚠️ {error}</p>
               )}
 
               <div className="flex gap-2 mt-4">
-                <button
-                  onClick={() => setStep(1)}
-                  className="flex-1 border-2 border-gray-200 hover:border-gray-300 text-gray-600 font-bold py-3 rounded-xl transition-colors"
-                >
+                <button onClick={() => setStep(1)} className="flex-1 border-2 border-gray-200 hover:border-gray-300 text-gray-600 font-bold py-3 rounded-xl transition-colors">
                   ← Voltar
                 </button>
                 <button
@@ -346,15 +355,7 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
                   disabled={loading || !theme.trim()}
                   className="flex-1 bg-gradient-to-r from-orange-500 to-red-600 hover:opacity-90 disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 text-white font-black py-3 rounded-xl transition-all"
                 >
-                  {loading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                      </svg>
-                      Gerando com IA...
-                    </span>
-                  ) : '✨ Gerar Post com IA'}
+                  {loading ? 'Gerando com IA...' : '✨ Gerar Post'}
                 </button>
               </div>
             </div>
@@ -363,18 +364,7 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
           {/* Step 3 – Result */}
           {step === 3 && result && (
             <div className="space-y-4">
-              {/* Provider badge */}
-              <div className="flex items-center gap-2">
-                <span className="bg-green-100 text-green-700 text-[10px] font-black px-2.5 py-1 rounded-full">
-                  ✓ Gerado com {providerUsed}
-                </span>
-                {result.tipo_conteudo && (
-                  <span className="bg-orange-100 text-orange-700 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                    {result.tipo_conteudo}
-                  </span>
-                )}
-              </div>
-
+              
               {/* Caption */}
               <div className="bg-gradient-to-br from-orange-50 to-red-50 border border-orange-100 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-3">
@@ -382,20 +372,11 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
                     <span>📝</span>
                     <h3 className="font-black text-gray-800 text-sm">Legenda do Post</h3>
                   </div>
-                  <button
-                    onClick={copyCaption}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-full transition-all ${
-                      copied
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-white text-red-600 border border-red-200 hover:bg-red-50'
-                    }`}
-                  >
+                  <button onClick={copyCaption} className="text-xs font-bold px-3 py-1.5 rounded-full transition-all bg-white text-red-600 border border-red-200 hover:bg-red-50">
                     {copied ? '✓ Copiado!' : '📋 Copiar tudo'}
                   </button>
                 </div>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-                  {result.legenda}
-                </p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{result.legenda}</p>
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {result.hashtags?.map((h, i) => (
                     <span key={i} className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -405,25 +386,54 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
                 </div>
               </div>
 
-              {/* Image concept */}
+              {/* Image Generator Area */}
               <div className="bg-white border border-gray-100 rounded-2xl p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <span>🎨</span>
-                  <h3 className="font-black text-gray-800 text-sm">Conceito Visual da Imagem</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span>🎨</span>
+                    <h3 className="font-black text-gray-800 text-sm">Imagens para o Post</h3>
+                  </div>
+                  
+                  {!generatedImages.length && (
+                    <button 
+                      onClick={handleGenerateImages} 
+                      disabled={generatingImages}
+                      className="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {generatingImages ? (
+                        <span className="animate-pulse">Criando artes...</span>
+                      ) : (
+                        '✨ Gerar 3 Opções'
+                      )}
+                    </button>
+                  )}
                 </div>
-                <p className="text-sm text-gray-600 leading-relaxed mb-3">{result.conceito_imagem}</p>
-                {/* Products used */}
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                  {selected.map(p => (
-                    <div key={p.id} className="relative rounded-xl overflow-hidden aspect-square">
-                      <img src={p.img} alt={p.name} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                      <p className="absolute bottom-1 left-1 right-1 text-white text-[9px] font-bold line-clamp-1 leading-tight">
-                        {p.name}
-                      </p>
-                    </div>
-                  ))}
-                </div>
+                
+                <p className="text-xs text-gray-500 mb-4 italic">Conceito base: {result.conceito_imagem}</p>
+
+                {/* Grid das Imagens Geradas */}
+                {generatedImages.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {generatedImages.map((imgUrl, i) => (
+                      <div key={i} className="group relative rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
+                        <img 
+                          src={imgUrl} 
+                          alt={`Opção ${i + 1}`} 
+                          className="w-full aspect-square object-cover transition-transform duration-300 group-hover:scale-105" 
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
+                          <button 
+                            onClick={() => downloadImage(imgUrl, i)}
+                            className="bg-white text-gray-900 font-bold text-xs px-4 py-2 rounded-full transform translate-y-4 group-hover:translate-y-0 transition-all hover:bg-red-50 hover:text-red-600 flex items-center gap-1.5"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            Baixar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Stories */}
@@ -436,9 +446,7 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
                   <div className="space-y-2.5">
                     {result.stories.map((s, i) => (
                       <div key={i} className="flex gap-3 items-start">
-                        <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black text-white mt-0.5 ${
-                          ['bg-orange-500', 'bg-red-500', 'bg-red-700'][i]
-                        }`}>
+                        <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black text-white mt-0.5 ${['bg-orange-500', 'bg-red-500', 'bg-red-700'][i]}`}>
                           {i + 1}
                         </span>
                         <p className="text-sm text-gray-600 leading-relaxed">{s}</p>
@@ -448,21 +456,8 @@ export default function InstagramGenerator({ onClose, preSelectedProduct }) {
                 </div>
               )}
 
-              {/* Best time */}
-              {result.melhor_horario && (
-                <div className="bg-green-50 border border-green-100 rounded-xl p-3 flex items-start gap-2">
-                  <span className="flex-shrink-0 mt-0.5">⏰</span>
-                  <p className="text-sm text-green-800">
-                    <strong>Melhor horário para postar:</strong> {result.melhor_horario}
-                  </p>
-                </div>
-              )}
-
-              <button
-                onClick={restart}
-                className="w-full border-2 border-gray-200 hover:border-red-300 text-gray-600 hover:text-red-600 font-bold py-3 rounded-xl transition-all text-sm"
-              >
-                🔄 Gerar novo post
+              <button onClick={restart} className="w-full border-2 border-gray-200 hover:border-red-300 text-gray-600 hover:text-red-600 font-bold py-3 rounded-xl transition-all text-sm">
+                🔄 Começar do zero
               </button>
             </div>
           )}
